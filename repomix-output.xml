@@ -1,0 +1,909 @@
+This file is a merged representation of the entire codebase, combined into a single document by Repomix.
+
+<file_summary>
+This section contains a summary of this file.
+
+<purpose>
+This file contains a packed representation of the entire repository's contents.
+It is designed to be easily consumable by AI systems for analysis, code review,
+or other automated processes.
+</purpose>
+
+<file_format>
+The content is organized as follows:
+1. This summary section
+2. Repository information
+3. Directory structure
+4. Repository files (if enabled)
+5. Multiple file entries, each consisting of:
+  - File path as an attribute
+  - Full contents of the file
+</file_format>
+
+<usage_guidelines>
+- This file should be treated as read-only. Any changes should be made to the
+  original repository files, not this packed version.
+- When processing this file, use the file path to distinguish
+  between different files in the repository.
+- Be aware that this file may contain sensitive information. Handle it with
+  the same level of security as you would the original repository.
+</usage_guidelines>
+
+<notes>
+- Some files may have been excluded based on .gitignore rules and Repomix's configuration
+- Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
+- Files matching patterns in .gitignore are excluded
+- Files matching default ignore patterns are excluded
+- Files are sorted by Git change count (files with more changes are at the bottom)
+</notes>
+
+</file_summary>
+
+<directory_structure>
+backend/__init__.py
+backend/detector.py
+backend/main.py
+backend/requirements.txt
+backend/yolov8n.pt
+frontend/app.js
+frontend/index.html
+frontend/styles.css
+README.md
+requirements.txt
+sample_images/7ac8c338a77c148269a4081b0228487a.jpg
+sample_images/photo_2026-04-14_19-58-44.jpg
+sample_images/photo_2026-04-14_20-00-51.jpg
+sample_images/photo_2026-04-15_10-34-00.jpg
+sample_images/scale_1200.jpg
+</directory_structure>
+
+<files>
+This section contains the contents of the repository's files.
+
+<file path="backend/__init__.py">
+
+</file>
+
+<file path="backend/detector.py">
+from __future__ import annotations
+
+import math
+from dataclasses import dataclass, field
+from typing import Optional
+
+import cv2
+import numpy as np
+from ultralytics import YOLO
+
+_CLS_PERSON = 0
+_CLS_CHAIR = 56
+_CLS_DINING_TABLE = 60
+
+_DESK_CAPACITY = 2
+_DESK_GAP_FACTOR = 2.5
+_ROW_Y_FACTOR = 0.6
+_DESK_VERTICAL_EXPAND = 1.6
+_DESK_HORIZONTAL_EXPAND = 0.15
+
+
+@dataclass
+class Seat:
+    index: int
+    side: str
+    box: tuple[int, int, int, int]
+    occupied: bool = False
+    person_box: Optional[tuple[int, int, int, int]] = None
+
+
+@dataclass
+class Desk:
+    box: tuple[int, int, int, int]
+    source: str
+    seats: list[Seat] = field(default_factory=list)
+
+    @property
+    def occupied_count(self) -> int:
+        return sum(1 for s in self.seats if s.occupied)
+
+    @property
+    def free_count(self) -> int:
+        return len(self.seats) - self.occupied_count
+
+
+@dataclass
+class DetectionResult:
+    desks: list[Desk]
+    persons_detected: int
+    total_seats: int
+    occupied_seats: int
+    free_seats: int
+    annotated_image: np.ndarray
+
+
+def _box_center(box: tuple[int, int, int, int]) -> tuple[float, float]:
+    x1, y1, x2, y2 = box
+    return ((x1 + x2) / 2, (y1 + y2) / 2)
+
+
+def _box_bottom_center(box: tuple[int, int, int, int]) -> tuple[float, float]:
+    x1, _, x2, y2 = box
+    return ((x1 + x2) / 2, float(y2))
+
+
+def _expand_box(
+    box: tuple[int, int, int, int],
+    image_shape: tuple[int, int, int],
+    *,
+    horizontal_factor: float,
+    vertical_factor: float,
+) -> tuple[int, int, int, int]:
+    height, width = image_shape[:2]
+    x1, y1, x2, y2 = box
+    box_w = x2 - x1
+    box_h = y2 - y1
+    return (
+        max(0, x1 - int(box_w * horizontal_factor)),
+        max(0, y1 - int(box_h * vertical_factor)),
+        min(width - 1, x2 + int(box_w * horizontal_factor)),
+        min(height - 1, y2 + int(box_h * 0.2)),
+    )
+
+
+def _make_two_seats(box: tuple[int, int, int, int]) -> list[Seat]:
+    x1, y1, x2, y2 = box
+    middle = (x1 + x2) // 2
+    return [
+        Seat(index=1, side="left", box=(x1, y1, middle, y2)),
+        Seat(index=2, side="right", box=(middle, y1, x2, y2)),
+    ]
+
+
+def _build_desks_from_tables(tables: list[tuple[int, int, int, int]]) -> list[Desk]:
+    desks: list[Desk] = []
+    for table in sorted(tables, key=lambda b: (_box_center(b)[1], _box_center(b)[0])):
+        desks.append(Desk(box=table, source="table", seats=_make_two_seats(table)))
+    return desks
+
+
+def _build_desks_from_chairs(chairs: list[tuple[int, int, int, int]]) -> list[Desk]:
+    if len(chairs) < 2:
+        return []
+
+    chairs = sorted(chairs, key=lambda b: (_box_center(b)[1], _box_center(b)[0]))
+    used = [False] * len(chairs)
+    desks: list[Desk] = []
+
+    for i, c1 in enumerate(chairs):
+        if used[i]:
+            continue
+        cx1, cy1 = _box_center(c1)
+        w1 = c1[2] - c1[0]
+        h1 = c1[3] - c1[1]
+        best_j = -1
+        best_dist = float("inf")
+
+        for j in range(i + 1, len(chairs)):
+            if used[j]:
+                continue
+            c2 = chairs[j]
+            cx2, cy2 = _box_center(c2)
+            dy = abs(cy2 - cy1)
+            dx = cx2 - cx1
+
+            if dy > _ROW_Y_FACTOR * h1:
+                continue
+            if dx < 0 or dx > _DESK_GAP_FACTOR * w1:
+                continue
+
+            dist = math.hypot(dx, dy)
+            if dist < best_dist:
+                best_dist = dist
+                best_j = j
+
+        if best_j >= 0:
+            used[i] = True
+            used[best_j] = True
+            c2 = chairs[best_j]
+            left, right = (c1, c2) if _box_center(c1)[0] < _box_center(c2)[0] else (c2, c1)
+            x1 = min(left[0], right[0])
+            y1 = min(left[1], right[1])
+            x2 = max(left[2], right[2])
+            y2 = max(left[3], right[3])
+            desk_box = (x1, y1, x2, y2)
+            desks.append(Desk(box=desk_box, source="chairs", seats=_make_two_seats(desk_box)))
+
+    return desks
+
+
+def _assign_people_to_seats(
+    desks: list[Desk],
+    persons: list[tuple[int, int, int, int]],
+    image_shape: tuple[int, int, int],
+) -> None:
+    slots: list[tuple[Desk, Seat, tuple[int, int, int, int]]] = []
+    for desk in desks:
+        for seat in desk.seats:
+            expanded = _expand_box(
+                seat.box,
+                image_shape,
+                horizontal_factor=_DESK_HORIZONTAL_EXPAND,
+                vertical_factor=_DESK_VERTICAL_EXPAND,
+            )
+            slots.append((desk, seat, expanded))
+
+    scored: list[tuple[float, int, int]] = []
+    for pi, person in enumerate(persons):
+        pcx, pcy = _box_bottom_center(person)
+        for si, (_, _, exp_box) in enumerate(slots):
+            ex1, ey1, ex2, ey2 = exp_box
+            if ex1 <= pcx <= ex2 and ey1 <= pcy <= ey2:
+                scx, scy = _box_center(exp_box)
+                scored.append((math.hypot(pcx - scx, pcy - scy), pi, si))
+
+    scored.sort(key=lambda t: t[0])
+
+    assigned_persons: set[int] = set()
+    assigned_slots: set[int] = set()
+    for _, pi, si in scored:
+        if pi in assigned_persons or si in assigned_slots:
+            continue
+        _, seat, _ = slots[si]
+        seat.occupied = True
+        seat.person_box = persons[pi]
+        assigned_persons.add(pi)
+        assigned_slots.add(si)
+
+
+def _draw_annotations(
+    img: np.ndarray,
+    desks: list[Desk],
+    persons: list[tuple[int, int, int, int]],
+) -> np.ndarray:
+    out = img.copy()
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    colors = {
+        "free": (0, 200, 0),
+        "taken": (0, 0, 220),
+        "person": (255, 140, 0),
+        "desk_label": (255, 255, 255),
+    }
+
+    for di, desk in enumerate(desks):
+        x1, y1, x2, y2 = desk.box
+        cv2.rectangle(out, (x1, y1), (x2, y2), (200, 200, 50), 2)
+        cv2.putText(
+            out,
+            f"Desk {di + 1}",
+            (x1, max(16, y1 - 6)),
+            font,
+            0.55,
+            colors["desk_label"],
+            2,
+            cv2.LINE_AA,
+        )
+
+        for seat in desk.seats:
+            color = colors["taken"] if seat.occupied else colors["free"]
+            sx1, sy1, sx2, sy2 = seat.box
+            cv2.rectangle(out, (sx1, sy1), (sx2, sy2), color, 2)
+            label = "Occupied" if seat.occupied else "Free"
+            cv2.putText(out, label, (sx1, sy2 + 16), font, 0.45, color, 1, cv2.LINE_AA)
+
+    for box in persons:
+        x1, y1, x2, y2 = box
+        cv2.rectangle(out, (x1, y1), (x2, y2), colors["person"], 2)
+
+    return out
+
+
+class ClassroomDetector:
+    def __init__(self, model_path: str = "yolov8n.pt"):
+        self._model = YOLO(model_path)
+
+    def process(self, image_bytes: bytes) -> DetectionResult:
+        arr = np.frombuffer(image_bytes, np.uint8)
+        img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+        if img is None:
+            raise ValueError("Cannot decode image")
+
+        results = self._model(img, verbose=False)[0]
+
+        persons: list[tuple[int, int, int, int]] = []
+        chairs: list[tuple[int, int, int, int]] = []
+        tables: list[tuple[int, int, int, int]] = []
+
+        for box in results.boxes:
+            cls = int(box.cls[0])
+            conf = float(box.conf[0])
+            x1, y1, x2, y2 = map(int, box.xyxy[0])
+
+            if cls == _CLS_PERSON and conf >= 0.30:
+                persons.append((x1, y1, x2, y2))
+            elif cls == _CLS_CHAIR and conf >= 0.25:
+                chairs.append((x1, y1, x2, y2))
+            elif cls == _CLS_DINING_TABLE and conf >= 0.20:
+                tables.append((x1, y1, x2, y2))
+
+        desks = _build_desks_from_tables(tables)
+        if not desks:
+            desks = _build_desks_from_chairs(chairs)
+
+        _assign_people_to_seats(desks, persons, img.shape)
+
+        total = sum(len(d.seats) for d in desks)
+        occupied = sum(d.occupied_count for d in desks)
+        free = max(0, total - occupied)
+
+        annotated = _draw_annotations(img, desks, persons)
+
+        return DetectionResult(
+            desks=desks,
+            persons_detected=len(persons),
+            total_seats=total,
+            occupied_seats=occupied,
+            free_seats=free,
+            annotated_image=annotated,
+        )
+</file>
+
+<file path="backend/main.py">
+from __future__ import annotations
+
+import base64
+import os
+from pathlib import Path
+
+import cv2
+from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+
+try:
+    from .detector import ClassroomDetector, DetectionResult
+except ImportError:
+    from detector import ClassroomDetector, DetectionResult
+
+
+ROOT_DIR = Path(__file__).resolve().parents[1]
+FRONTEND_DIR = ROOT_DIR / "frontend"
+
+app = FastAPI(title="Classroom Occupancy Detector")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+detector = ClassroomDetector(model_path=os.getenv("YOLO_MODEL", "yolov8n.pt"))
+
+
+def _box_to_dict(box: tuple[int, int, int, int]) -> dict[str, int]:
+    x1, y1, x2, y2 = box
+    return {"x1": x1, "y1": y1, "x2": x2, "y2": y2}
+
+
+def _result_to_response(result: DetectionResult) -> dict:
+    ok, buffer = cv2.imencode(".jpg", result.annotated_image)
+    if not ok:
+        raise HTTPException(status_code=500, detail="Cannot encode annotated image")
+
+    desks = []
+    for index, desk in enumerate(result.desks, start=1):
+        desks.append(
+            {
+                "index": index,
+                "source": desk.source,
+                "box": _box_to_dict(desk.box),
+                "occupied_count": desk.occupied_count,
+                "free_count": desk.free_count,
+                "seats": [
+                    {
+                        "index": seat.index,
+                        "side": seat.side,
+                        "occupied": seat.occupied,
+                        "box": _box_to_dict(seat.box),
+                        "person_box": _box_to_dict(seat.person_box)
+                        if seat.person_box
+                        else None,
+                    }
+                    for seat in desk.seats
+                ],
+            }
+        )
+
+    image_base64 = base64.b64encode(buffer).decode("ascii")
+    return {
+        "persons_detected": result.persons_detected,
+        "desks_detected": len(result.desks),
+        "total_seats": result.total_seats,
+        "occupied_seats": result.occupied_seats,
+        "free_seats": result.free_seats,
+        "desks": desks,
+        "annotated_image": f"data:image/jpeg;base64,{image_base64}",
+    }
+
+
+@app.post("/api/analyze")
+async def analyze_image(file: UploadFile = File(...)) -> dict:
+    if not file.content_type or not file.content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="Upload an image file")
+
+    image_bytes = await file.read()
+    if not image_bytes:
+        raise HTTPException(status_code=400, detail="Empty file")
+
+    try:
+        result = detector.process(image_bytes)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return _result_to_response(result)
+
+
+@app.get("/")
+async def index() -> FileResponse:
+    return FileResponse(FRONTEND_DIR / "index.html")
+
+
+app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
+</file>
+
+<file path="backend/requirements.txt">
+-r ../requirements.txt
+-r ../requirements.txt
+</file>
+
+<file path="frontend/app.js">
+const form = document.querySelector("#upload-form");
+const imageInput = document.querySelector("#image-input");
+const statusEl = document.querySelector("#status");
+const resultEl = document.querySelector("#result");
+
+const freeSeatsEl = document.querySelector("#free-seats");
+const occupiedSeatsEl = document.querySelector("#occupied-seats");
+const totalSeatsEl = document.querySelector("#total-seats");
+const desksDetectedEl = document.querySelector("#desks-detected");
+const deskTableBody = document.querySelector("#desk-table-body");
+const annotatedImage = document.querySelector("#annotated-image");
+const noteEl = document.querySelector("#note");
+
+function seatText(seats, side) {
+  const seat = seats.find((item) => item.side === side);
+  if (!seat) {
+    return "-";
+  }
+  return seat.occupied ? "занято" : "свободно";
+}
+
+function renderResult(data) {
+  freeSeatsEl.textContent = data.free_seats;
+  occupiedSeatsEl.textContent = data.occupied_seats;
+  totalSeatsEl.textContent = data.total_seats;
+  desksDetectedEl.textContent = data.desks_detected;
+  noteEl.textContent = data.note;
+  annotatedImage.src = data.annotated_image;
+
+  deskTableBody.innerHTML = "";
+  for (const desk of data.desks) {
+    const row = document.createElement("tr");
+    row.innerHTML = `
+      <td>${desk.index}</td>
+      <td>${desk.source}</td>
+      <td>${seatText(desk.seats, "left")}</td>
+      <td>${seatText(desk.seats, "right")}</td>
+      <td>${desk.free_count}</td>
+    `;
+    deskTableBody.appendChild(row);
+  }
+
+  resultEl.hidden = false;
+}
+
+form.addEventListener("submit", async (event) => {
+  event.preventDefault();
+
+  const [file] = imageInput.files;
+  if (!file) {
+    statusEl.textContent = "Выберите файл.";
+    return;
+  }
+
+  const formData = new FormData();
+  formData.append("file", file);
+
+  statusEl.textContent = "Идет обработка изображения...";
+  resultEl.hidden = true;
+
+  try {
+    const response = await fetch("/api/analyze", {
+      method: "POST",
+      body: formData,
+    });
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(data.detail || "Ошибка обработки");
+    }
+
+    statusEl.textContent = "Готово.";
+    renderResult(data);
+  } catch (error) {
+    statusEl.textContent = `Ошибка: ${error.message}`;
+  }
+});
+</file>
+
+<file path="frontend/index.html">
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Определение заполненности аудитории</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main>
+      <h1>Определение заполненности аудитории</h1>
+      <p>
+        Загрузите фотографию аудитории. Backend найдет людей и парты через YOLOv8,
+        затем посчитает свободные места.
+      </p>
+
+      <form id="upload-form">
+        <input id="image-input" type="file" accept="image/*" required />
+        <button type="submit">Проверить</button>
+      </form>
+
+      <p id="status"></p>
+
+      <section id="result" hidden>
+        <h2>Результат</h2>
+        <div class="summary">
+          <div>
+            <span class="label">Свободных мест</span>
+            <strong id="free-seats">0</strong>
+          </div>
+          <div>
+            <span class="label">Занято</span>
+            <strong id="occupied-seats">0</strong>
+          </div>
+          <div>
+            <span class="label">Всего мест</span>
+            <strong id="total-seats">0</strong>
+          </div>
+          <div>
+            <span class="label">Парт найдено</span>
+            <strong id="desks-detected">0</strong>
+          </div>
+        </div>
+
+        <h3>Парты</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>Парта</th>
+              <th>Источник</th>
+              <th>Левое место</th>
+              <th>Правое место</th>
+              <th>Свободно</th>
+            </tr>
+          </thead>
+          <tbody id="desk-table-body"></tbody>
+        </table>
+
+        <h3>Разметка</h3>
+        <img id="annotated-image" alt="Изображение с разметкой" />
+        <p id="note"></p>
+      </section>
+    </main>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>
+</file>
+
+<file path="frontend/styles.css">
+body {
+  margin: 0;
+  background: #eeeeee;
+  color: #111111;
+  font-family: Arial, sans-serif;
+}
+
+main {
+  max-width: 1000px;
+  margin: 24px auto;
+  padding: 20px;
+  background: #ffffff;
+  border: 1px solid #cccccc;
+}
+
+h1,
+h2,
+h3 {
+  margin-top: 0;
+}
+
+form {
+  display: flex;
+  gap: 12px;
+  margin: 20px 0;
+}
+
+button {
+  padding: 8px 14px;
+  cursor: pointer;
+}
+
+#status {
+  min-height: 24px;
+  font-weight: bold;
+}
+
+.summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(120px, 1fr));
+  gap: 12px;
+  margin-bottom: 24px;
+}
+
+.summary div {
+  padding: 14px;
+  background: #f4f4f4;
+  border: 1px solid #cccccc;
+}
+
+.label {
+  display: block;
+  color: #555555;
+  font-size: 14px;
+}
+
+.summary strong {
+  display: block;
+  margin-top: 8px;
+  font-size: 34px;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 24px;
+}
+
+th,
+td {
+  padding: 8px;
+  border: 1px solid #cccccc;
+  text-align: left;
+}
+
+img {
+  max-width: 100%;
+  border: 1px solid #cccccc;
+}
+
+#note {
+  color: #555555;
+}
+
+@media (max-width: 760px) {
+  form,
+  .summary {
+    display: block;
+  }
+
+  .summary div {
+    margin-bottom: 10px;
+  }
+}
+body {
+  margin: 0;
+  background: #eeeeee;
+  color: #111111;
+  font-family: Arial, sans-serif;
+}
+
+main {
+  max-width: 1000px;
+  margin: 24px auto;
+  padding: 20px;
+  background: #ffffff;
+  border: 1px solid #cccccc;
+}
+
+h1,
+h2,
+h3 {
+  margin-top: 0;
+}
+
+form {
+  display: flex;
+  gap: 12px;
+  margin: 20px 0;
+}
+
+button {
+  padding: 8px 14px;
+  cursor: pointer;
+}
+
+#status {
+  min-height: 24px;
+  font-weight: bold;
+}
+
+.summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(120px, 1fr));
+  gap: 12px;
+  margin-bottom: 24px;
+}
+
+.summary div {
+  padding: 14px;
+  background: #f4f4f4;
+  border: 1px solid #cccccc;
+}
+
+.label {
+  display: block;
+  color: #555555;
+  font-size: 14px;
+}
+
+.summary strong {
+  display: block;
+  margin-top: 8px;
+  font-size: 34px;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 24px;
+}
+
+th,
+td {
+  padding: 8px;
+  border: 1px solid #cccccc;
+  text-align: left;
+}
+
+img {
+  max-width: 100%;
+  border: 1px solid #cccccc;
+}
+
+#note {
+  color: #555555;
+}
+
+@media (max-width: 760px) {
+  form,
+  .summary {
+    display: block;
+  }
+
+  .summary div {
+    margin-bottom: 10px;
+  }
+}
+</file>
+
+<file path="README.md">
+# Определение заполненности аудитории по фото
+
+Учебный проект: backend принимает фотографию аудитории, запускает YOLOv8,
+определяет людей и парты, привязывает людей к местам за партами и возвращает
+число свободных мест.
+
+Frontend специально сделан максимально простым: загрузка изображения, результат
+и картинка с разметкой.
+
+## Что используется
+
+- Python 3.10+
+- FastAPI
+- YOLOv8 из пакета `ultralytics`
+- OpenCV
+- Простой HTML/CSS/JS frontend
+
+## Установка
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+```
+
+При первом запуске `ultralytics` автоматически скачает модель `yolov8n.pt`.
+
+Если виртуальное окружение уже создано внутри папки `backend`, можно выполнить:
+
+```powershell
+cd backend
+.\venv\Scripts\Activate.ps1
+pip install --upgrade -r requirements.txt
+```
+
+Если при запуске появляется ошибка PyTorch вида `Weights only load failed`,
+обновите зависимости командой выше. Обычно это происходит из-за старой версии
+`ultralytics` вместе с новым PyTorch.
+
+## Запуск
+
+```powershell
+uvicorn backend.main:app --reload
+```
+
+После запуска откройте:
+
+```text
+http://127.0.0.1:8000
+```
+
+## Как работает алгоритм
+
+1. YOLOv8 ищет на фото людей (`person`), столы (`dining table`) и стулья
+   (`chair`) из стандартного COCO-набора классов.
+2. Так как в COCO нет отдельного класса "school desk", стандартная модель
+   использует `dining table` как приближение к парте.
+3. Если столы не найдены, включается fallback: соседние стулья в одном ряду
+   группируются в одну парту.
+4. Каждая парта считается двухместной.
+5. Парта делится на левое и правое место.
+6. Для каждого человека берется нижняя центральная точка bounding box, потому
+   что для сидящего человека она обычно ближе к месту за партой.
+7. Если точка человека попадает в расширенную область места, место считается
+   занятым.
+8. Итог: `свободные места = всего мест - занятые места`.
+
+## Важное ограничение
+
+Стандартная `yolov8n.pt` обучена на COCO и не знает точный класс "парта".
+Для демонстрационного учебного проекта этого достаточно, но для стабильной
+работы на фотографиях аудиторий лучше дообучить YOLOv8 на своих размеченных
+данных с классами:
+
+- `person`
+- `desk`
+
+Тогда в `backend/detector.py` нужно будет заменить класс `dining table` на
+класс вашей кастомной `desk`-модели.
+
+## API
+
+### `POST /api/analyze`
+
+Поле формы:
+
+- `file` - изображение аудитории.
+
+Ответ содержит:
+
+- `free_seats` - число свободных мест;
+- `occupied_seats` - число занятых мест;
+- `total_seats` - общее число найденных мест;
+- `desks` - список парт и мест;
+- `annotated_image` - изображение с разметкой в base64.
+</file>
+
+<file path="requirements.txt">
+fastapi>=0.111.0
+uvicorn[standard]>=0.29.0
+python-multipart>=0.0.9
+ultralytics>=8.3.0
+opencv-python-headless>=4.9.0.80
+numpy>=1.26.4
+Pillow>=10.3.0
+scipy>=1.13.0
+</file>
+
+</files>

@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Определение заполненности аудитории</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main>
+      <h1>Определение заполненности аудитории</h1>
+      <p>
+        Загрузите фотографию аудитории. Backend найдет людей и парты через YOLOv8,
+        затем посчитает свободные места.
+      </p>
+
+      <form id="upload-form">
+        <input id="image-input" type="file" accept="image/*" required />
+        <button type="submit">Проверить</button>
+      </form>
+
+      <p id="status"></p>
+
+      <section id="result" hidden>
+        <h2>Результат</h2>
+        <div class="summary">
+          <div>
+            <span class="label">Свободных мест</span>
+            <strong id="free-seats">0</strong>
+          </div>
+          <div>
+            <span class="label">Занято</span>
+            <strong id="occupied-seats">0</strong>
+          </div>
+          <div>
+            <span class="label">Всего мест</span>
+            <strong id="total-seats">0</strong>
+          </div>
+          <div>
+            <span class="label">Парт найдено</span>
+            <strong id="desks-detected">0</strong>
+          </div>
+        </div>
+
+        <h3>Парты</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>Парта</th>
+              <th>Источник</th>
+              <th>Левое место</th>
+              <th>Правое место</th>
+              <th>Свободно</th>
+            </tr>
+          </thead>
+          <tbody id="desk-table-body"></tbody>
+        </table>
+
+        <h3>Разметка</h3>
+        <img id="annotated-image" alt="Изображение с разметкой" />
+        <p id="note"></p>
+      </section>
+    </main>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>

@@ -1,0 +1,188 @@
+body {
+  margin: 0;
+  background: #eeeeee;
+  color: #111111;
+  font-family: Arial, sans-serif;
+}
+
+main {
+  max-width: 1000px;
+  margin: 24px auto;
+  padding: 20px;
+  background: #ffffff;
+  border: 1px solid #cccccc;
+}
+
+h1,
+h2,
+h3 {
+  margin-top: 0;
+}
+
+form {
+  display: flex;
+  gap: 12px;
+  margin: 20px 0;
+}
+
+button {
+  padding: 8px 14px;
+  cursor: pointer;
+}
+
+#status {
+  min-height: 24px;
+  font-weight: bold;
+}
+
+.summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(120px, 1fr));
+  gap: 12px;
+  margin-bottom: 24px;
+}
+
+.summary div {
+  padding: 14px;
+  background: #f4f4f4;
+  border: 1px solid #cccccc;
+}
+
+.label {
+  display: block;
+  color: #555555;
+  font-size: 14px;
+}
+
+.summary strong {
+  display: block;
+  margin-top: 8px;
+  font-size: 34px;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 24px;
+}
+
+th,
+td {
+  padding: 8px;
+  border: 1px solid #cccccc;
+  text-align: left;
+}
+
+img {
+  max-width: 100%;
+  border: 1px solid #cccccc;
+}
+
+#note {
+  color: #555555;
+}
+
+@media (max-width: 760px) {
+  form,
+  .summary {
+    display: block;
+  }
+
+  .summary div {
+    margin-bottom: 10px;
+  }
+}
+body {
+  margin: 0;
+  background: #eeeeee;
+  color: #111111;
+  font-family: Arial, sans-serif;
+}
+
+main {
+  max-width: 1000px;
+  margin: 24px auto;
+  padding: 20px;
+  background: #ffffff;
+  border: 1px solid #cccccc;
+}
+
+h1,
+h2,
+h3 {
+  margin-top: 0;
+}
+
+form {
+  display: flex;
+  gap: 12px;
+  margin: 20px 0;
+}
+
+button {
+  padding: 8px 14px;
+  cursor: pointer;
+}
+
+#status {
+  min-height: 24px;
+  font-weight: bold;
+}
+
+.summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(120px, 1fr));
+  gap: 12px;
+  margin-bottom: 24px;
+}
+
+.summary div {
+  padding: 14px;
+  background: #f4f4f4;
+  border: 1px solid #cccccc;
+}
+
+.label {
+  display: block;
+  color: #555555;
+  font-size: 14px;
+}
+
+.summary strong {
+  display: block;
+  margin-top: 8px;
+  font-size: 34px;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 24px;
+}
+
+th,
+td {
+  padding: 8px;
+  border: 1px solid #cccccc;
+  text-align: left;
+}
+
+img {
+  max-width: 100%;
+  border: 1px solid #cccccc;
+}
+
+#note {
+  color: #555555;
+}
+
+@media (max-width: 760px) {
+  form,
+  .summary {
+    display: block;
+  }
+
+  .summary div {
+    margin-bottom: 10px;
+  }
+}
