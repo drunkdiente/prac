@@ -4,19 +4,23 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Определение заполненности аудитории</title>
-    <link rel="stylesheet" href="/static/styles.css" />
+    <link rel="stylesheet" href="/static/styles.css?v=3" />
   </head>
   <body>
     <main>
       <h1>Определение заполненности аудитории</h1>
       <p>
-        Загрузите фотографию аудитории. Backend найдет людей и парты через YOLOv8,
+        Загрузите фотографию аудитории. Backend найдет людей и парты через YOLO11,
         затем посчитает свободные места.
       </p>
 
       <form id="upload-form">
-        <input id="image-input" type="file" accept="image/*" required />
-        <button type="submit">Проверить</button>
+        <label class="file-label">
+          <input id="image-input" type="file" accept="image/*" />
+          <span class="file-button">Выбрать файл</span>
+          <span class="file-name" id="file-name">Файл не выбран</span>
+        </label>
+        <button id="submit-btn" type="submit" disabled>Проверить</button>
       </form>
 
       <p id="status"></p>
@@ -62,6 +66,6 @@
       </section>
     </main>
 
-    <script src="/static/app.js"></script>
+    <script src="/static/app.js?v=3"></script>
   </body>
 </html>

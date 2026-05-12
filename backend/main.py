@@ -12,8 +12,10 @@ from fastapi.staticfiles import StaticFiles
 
 try:
     from .detector import ClassroomDetector, DetectionResult
+    from .gdino_detector import GroundingDinoDetector
 except ImportError:
     from detector import ClassroomDetector, DetectionResult
+    from gdino_detector import GroundingDinoDetector
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -28,7 +30,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-detector = ClassroomDetector(model_path=os.getenv("YOLO_MODEL", "yolov8n.pt"))
+_detector_type = os.getenv("DETECTOR_TYPE", "yolo").lower()
+
+if _detector_type == "gdino":
+    detector = GroundingDinoDetector()
+else:
+    detector = ClassroomDetector(model_path=os.getenv("YOLO_MODEL", "yolo11m.pt"))
 
 
 def _box_to_dict(box: tuple[int, int, int, int]) -> dict[str, int]:

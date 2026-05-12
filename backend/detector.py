@@ -13,10 +13,92 @@ _CLS_CHAIR = 56
 _CLS_DINING_TABLE = 60
 
 _DESK_CAPACITY = 2
-_DESK_GAP_FACTOR = 2.5
-_ROW_Y_FACTOR = 0.6
-_DESK_VERTICAL_EXPAND = 1.6
-_DESK_HORIZONTAL_EXPAND = 0.15
+_DESK_GAP_FACTOR = 3.0
+_ROW_Y_FACTOR = 0.7
+_DESK_VERTICAL_EXPAND = 0.8
+_DESK_HORIZONTAL_EXPAND = 0.25
+
+# Фильтрация dining-table боксов (парты шире, чем выше)
+_MIN_DESK_ASPECT = 1.0
+_MAX_DESK_ASPECT = 3.5
+_MIN_DESK_SIZE_RATIO = 0.03
+_MAX_DESK_SIZE_RATIO = 0.50
+
+
+def _iou(box_a: tuple[int, int, int, int], box_b: tuple[int, int, int, int]) -> float:
+    x1 = max(box_a[0], box_b[0])
+    y1 = max(box_a[1], box_b[1])
+    x2 = min(box_a[2], box_b[2])
+    y2 = min(box_a[3], box_b[3])
+    inter = max(0, x2 - x1) * max(0, y2 - y1)
+    area_a = (box_a[2] - box_a[0]) * (box_a[3] - box_a[1])
+    area_b = (box_b[2] - box_b[0]) * (box_b[3] - box_b[1])
+    union = area_a + area_b - inter
+    return inter / union if union > 0 else 0.0
+
+
+def _is_valid_desk_box(box: tuple[int, int, int, int], img_shape: tuple[int, ...]) -> bool:
+    x1, y1, x2, y2 = box
+    w = x2 - x1
+    h = y2 - y1
+    if w <= 0 or h <= 0:
+        return False
+    aspect = w / h
+    if not (_MIN_DESK_ASPECT <= aspect <= _MAX_DESK_ASPECT):
+        return False
+    img_h, img_w = img_shape[:2]
+    min_side = min(img_w, img_h)
+    min_size = min_side * _MIN_DESK_SIZE_RATIO
+    max_size = min_side * _MAX_DESK_SIZE_RATIO
+    if w < min_size or h < min_size:
+        return False
+    if w > max_size or h > max_size:
+        return False
+    return True
+
+
+def _merge_overlapping_boxes(
+    boxes: list[tuple[int, int, int, int]], iou_threshold: float = 0.45
+) -> list[tuple[int, int, int, int]]:
+    if not boxes:
+        return []
+    boxes = sorted(boxes, key=lambda b: (b[1], b[0]))
+    merged: list[tuple[int, int, int, int]] = []
+    for box in boxes:
+        found = False
+        for i, m in enumerate(merged):
+            if _iou(box, m) > iou_threshold:
+                merged[i] = (
+                    min(m[0], box[0]),
+                    min(m[1], box[1]),
+                    max(m[2], box[2]),
+                    max(m[3], box[3]),
+                )
+                found = True
+                break
+        if not found:
+            merged.append(box)
+    # итеративно до стабилизации
+    for _ in range(3):
+        prev = merged
+        merged = []
+        for box in prev:
+            found = False
+            for i, m in enumerate(merged):
+                if _iou(box, m) > iou_threshold:
+                    merged[i] = (
+                        min(m[0], box[0]),
+                        min(m[1], box[1]),
+                        max(m[2], box[2]),
+                        max(m[3], box[3]),
+                    )
+                    found = True
+                    break
+            if not found:
+                merged.append(box)
+        if len(merged) == len(prev):
+            break
+    return merged
 
 
 @dataclass
@@ -74,11 +156,12 @@ def _expand_box(
     x1, y1, x2, y2 = box
     box_w = x2 - x1
     box_h = y2 - y1
+    # расширяем вниз (куда сидит человек) сильнее, чем вверх
     return (
         max(0, x1 - int(box_w * horizontal_factor)),
-        max(0, y1 - int(box_h * vertical_factor)),
+        max(0, y1 - int(box_h * vertical_factor * 0.3)),
         min(width - 1, x2 + int(box_w * horizontal_factor)),
-        min(height - 1, y2 + int(box_h * 0.2)),
+        min(height - 1, y2 + int(box_h * vertical_factor)),
     )
 
 
@@ -186,6 +269,49 @@ def _assign_people_to_seats(
         assigned_persons.add(pi)
         assigned_slots.add(si)
 
+    # Fallback: человек не попал в expanded место, но его bottom-center
+    # внутри bbox парты или перекрывается с ней — привязываем к ближайшему свободному
+    for pi, person in enumerate(persons):
+        if pi in assigned_persons:
+            continue
+        px, py = _box_bottom_center(person)
+        best_si = -1
+        best_dist = float("inf")
+        for si, (desk, seat, _) in enumerate(slots):
+            if si in assigned_slots:
+                continue
+            dx1, dy1, dx2, dy2 = desk.box
+            in_desk = dx1 <= px <= dx2 and dy1 <= py <= dy2
+            overlap = _iou(person, desk.box) > 0.05
+            if in_desk or overlap:
+                scx, scy = _box_center(seat.box)
+                dist = math.hypot(px - scx, py - scy)
+                if dist < best_dist:
+                    best_dist = dist
+                    best_si = si
+        if best_si >= 0:
+            _, seat, _ = slots[best_si]
+            seat.occupied = True
+            seat.person_box = person
+            assigned_persons.add(pi)
+            assigned_slots.add(best_si)
+
+
+def _draw_text_with_bg(
+    img: np.ndarray,
+    text: str,
+    pos: tuple[int, int],
+    font: int,
+    scale: float,
+    color: tuple[int, int, int],
+    thickness: int,
+    bg_color: tuple[int, int, int] = (0, 0, 0),
+) -> None:
+    (tw, th), _ = cv2.getTextSize(text, font, scale, thickness)
+    x, y = pos
+    cv2.rectangle(img, (x, y - th - 4), (x + tw + 4, y + 4), bg_color, -1)
+    cv2.putText(img, text, (x + 2, y), font, scale, color, thickness, cv2.LINE_AA)
+
 
 def _draw_annotations(
     img: np.ndarray,
@@ -199,20 +325,23 @@ def _draw_annotations(
         "taken": (0, 0, 220),
         "person": (255, 140, 0),
         "desk_label": (255, 255, 255),
+        "desk_table": (200, 200, 50),
+        "desk_chairs": (50, 150, 200),
     }
 
     for di, desk in enumerate(desks):
         x1, y1, x2, y2 = desk.box
-        cv2.rectangle(out, (x1, y1), (x2, y2), (200, 200, 50), 2)
-        cv2.putText(
+        desk_color = colors["desk_table"] if desk.source == "table" else colors["desk_chairs"]
+        cv2.rectangle(out, (x1, y1), (x2, y2), desk_color, 2)
+        _draw_text_with_bg(
             out,
             f"Desk {di + 1}",
-            (x1, max(16, y1 - 6)),
+            (x1, max(20, y1 - 4)),
             font,
             0.55,
             colors["desk_label"],
             2,
-            cv2.LINE_AA,
+            bg_color=(0, 0, 0),
         )
 
         for seat in desk.seats:
@@ -220,7 +349,16 @@ def _draw_annotations(
             sx1, sy1, sx2, sy2 = seat.box
             cv2.rectangle(out, (sx1, sy1), (sx2, sy2), color, 2)
             label = "Occupied" if seat.occupied else "Free"
-            cv2.putText(out, label, (sx1, sy2 + 16), font, 0.45, color, 1, cv2.LINE_AA)
+            _draw_text_with_bg(
+                out,
+                label,
+                (sx1, min(img.shape[0] - 4, sy2 + 14)),
+                font,
+                0.45,
+                color,
+                1,
+                bg_color=(0, 0, 0),
+            )
 
     for box in persons:
         x1, y1, x2, y2 = box
@@ -230,7 +368,7 @@ def _draw_annotations(
 
 
 class ClassroomDetector:
-    def __init__(self, model_path: str = "yolov8n.pt"):
+    def __init__(self, model_path: str = "yolo11m.pt"):
         self._model = YOLO(model_path)
 
     def process(self, image_bytes: bytes) -> DetectionResult:
@@ -239,7 +377,7 @@ class ClassroomDetector:
         if img is None:
             raise ValueError("Cannot decode image")
 
-        results = self._model(img, verbose=False)[0]
+        results = self._model(img, verbose=False, imgsz=1280, conf=0.20, iou=0.45)[0]
 
         persons: list[tuple[int, int, int, int]] = []
         chairs: list[tuple[int, int, int, int]] = []
@@ -250,16 +388,31 @@ class ClassroomDetector:
             conf = float(box.conf[0])
             x1, y1, x2, y2 = map(int, box.xyxy[0])
 
-            if cls == _CLS_PERSON and conf >= 0.30:
+            if cls == _CLS_PERSON and conf >= 0.25:
                 persons.append((x1, y1, x2, y2))
             elif cls == _CLS_CHAIR and conf >= 0.25:
                 chairs.append((x1, y1, x2, y2))
-            elif cls == _CLS_DINING_TABLE and conf >= 0.20:
+            elif cls == _CLS_DINING_TABLE and conf >= 0.15:
                 tables.append((x1, y1, x2, y2))
 
-        desks = _build_desks_from_tables(tables)
-        if not desks:
-            desks = _build_desks_from_chairs(chairs)
+        # Фильтрация + merge dining tables
+        tables = [t for t in tables if _is_valid_desk_box(t, img.shape)]
+        tables = _merge_overlapping_boxes(tables, iou_threshold=0.45)
+        tables = [t for t in tables if _is_valid_desk_box(t, img.shape)]
+
+        table_desks = _build_desks_from_tables(tables)
+        chair_desks = _build_desks_from_chairs(chairs)
+
+        # Комбинируем: стулья добавляем только если не перекрываются со столами
+        desks = list(table_desks)
+        existing_boxes = [d.box for d in desks]
+        for cd in chair_desks:
+            if not any(_iou(cd.box, eb) > 0.3 for eb in existing_boxes):
+                desks.append(cd)
+
+        # Если столов практически нет — полный fallback на стулья
+        if len(table_desks) < 2 and len(chair_desks) >= 2:
+            desks = chair_desks
 
         _assign_people_to_seats(desks, persons, img.shape)
 

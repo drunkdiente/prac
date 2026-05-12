@@ -1,5 +1,7 @@
 const form = document.querySelector("#upload-form");
 const imageInput = document.querySelector("#image-input");
+const fileNameEl = document.querySelector("#file-name");
+const submitBtn = document.querySelector("#submit-btn");
 const statusEl = document.querySelector("#status");
 const resultEl = document.querySelector("#result");
 
@@ -24,7 +26,7 @@ function renderResult(data) {
   occupiedSeatsEl.textContent = data.occupied_seats;
   totalSeatsEl.textContent = data.total_seats;
   desksDetectedEl.textContent = data.desks_detected;
-  noteEl.textContent = data.note;
+  noteEl.textContent = data.note || "";
   annotatedImage.src = data.annotated_image;
 
   deskTableBody.innerHTML = "";
@@ -43,20 +45,34 @@ function renderResult(data) {
   resultEl.hidden = false;
 }
 
+imageInput.addEventListener("change", () => {
+  const [file] = imageInput.files;
+  if (file) {
+    fileNameEl.textContent = file.name;
+    submitBtn.disabled = false;
+    statusEl.textContent = "";
+  } else {
+    fileNameEl.textContent = "Файл не выбран";
+    submitBtn.disabled = true;
+  }
+});
+
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
 
   const [file] = imageInput.files;
   if (!file) {
-    statusEl.textContent = "Выберите файл.";
+    statusEl.textContent = "Сначала выберите файл.";
     return;
   }
 
   const formData = new FormData();
   formData.append("file", file);
 
+  statusEl.className = "";
   statusEl.textContent = "Идет обработка изображения...";
   resultEl.hidden = true;
+  submitBtn.disabled = true;
 
   try {
     const response = await fetch("/api/analyze", {
@@ -70,8 +86,12 @@ form.addEventListener("submit", async (event) => {
     }
 
     statusEl.textContent = "Готово.";
+    statusEl.className = "status-success";
     renderResult(data);
   } catch (error) {
     statusEl.textContent = `Ошибка: ${error.message}`;
+    statusEl.className = "status-error";
+  } finally {
+    submitBtn.disabled = false;
   }
 });
