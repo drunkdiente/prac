@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Определение заполненности аудитории</title>
-    <link rel="stylesheet" href="/static/styles.css?v=3" />
+    <link rel="stylesheet" href="/static/styles.css?v=5" />
   </head>
   <body>
     <main>
@@ -46,6 +46,13 @@
           </div>
         </div>
 
+        <h3>План аудитории</h3>
+        <div id="seating-chart" class="seating-chart"></div>
+        <div class="chart-legend">
+          <span class="legend-item"><span class="legend-box free"></span> Свободно</span>
+          <span class="legend-item"><span class="legend-box occupied"></span> Занято</span>
+        </div>
+
         <h3>Парты</h3>
         <table>
           <thead>
@@ -66,6 +73,6 @@
       </section>
     </main>
 
-    <script src="/static/app.js?v=3"></script>
+    <script src="/static/app.js?v=5"></script>
   </body>
 </html>

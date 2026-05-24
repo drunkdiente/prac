@@ -231,6 +231,101 @@ img {
   font-size: 14px;
 }
 
+/* План аудитории */
+.seating-chart {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 24px;
+  margin-bottom: 12px;
+  padding: 18px;
+  background: #f9fafb;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow-x: auto;
+}
+
+.seating-row {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.row-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+  text-align: center;
+  margin-bottom: 8px;
+}
+
+.row-seats {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.desk-seats {
+  display: flex;
+  flex-direction: row;
+  gap: 4px;
+}
+
+.seat {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  background: var(--success);
+  cursor: default;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.seat.occupied {
+  background: var(--danger);
+}
+
+.seat:hover {
+  transform: scale(1.2);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+  z-index: 1;
+}
+
+.desk-gap {
+  height: 12px;
+}
+
+.chart-legend {
+  display: flex;
+  gap: 18px;
+  margin-bottom: 28px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.legend-box {
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  display: inline-block;
+}
+
+.legend-box.free {
+  background: var(--success);
+}
+
+.legend-box.occupied {
+  background: var(--danger);
+}
+
 @media (max-width: 760px) {
   main {
     margin: 16px;
